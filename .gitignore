@@ -1,0 +1,14 @@
+# Local development docs
+docs/
+
+# Generated captures
+screenshots/
+
+# Compiled binaries
+*.exe
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
