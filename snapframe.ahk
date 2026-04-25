@@ -2,36 +2,42 @@
 #SingleInstance Force
 
 /*
-    SnapFrame - MVP
-    ---------------
-    Ctrl + Alt + S: Enter capture mode.
+    SnapFrame - v0.2.0
+    ------------------
+    Ctrl + Alt + S: Open the capture size dialog.
     Esc: Cancel capture mode.
     Left click: Capture the current framed region.
 
-    How to change the capture size:
-    - Edit CAPTURE_WIDTH and CAPTURE_HEIGHT below.
+    Capture size:
+    - Enter width and height before each capture session.
 
     Output:
     - PNG files are saved to .\screenshots\
 */
 
-global CAPTURE_WIDTH := 1200
-global CAPTURE_HEIGHT := 800
+global APP_VERSION := "0.2.0"
+global DEFAULT_CAPTURE_WIDTH := 1200
+global DEFAULT_CAPTURE_HEIGHT := 800
 global OUTPUT_DIR := A_ScriptDir "\screenshots"
 global OVERLAY_BORDER_THICKNESS := 3
 global OVERLAY_COLOR := "00D7FF"
 global OVERLAY_BG_COLOR := "010203"
 global OVERLAY_REFRESH_MS := 16
 global OVERLAY_HIDE_DELAY_MS := 50
+global g_CaptureWidth := DEFAULT_CAPTURE_WIDTH
+global g_CaptureHeight := DEFAULT_CAPTURE_HEIGHT
 global g_IsCaptureMode := false
 global g_GdipToken := 0
 global g_OverlayGui := 0
 global g_OverlayVisualsApplied := false
+global g_OverlayWidth := 0
+global g_OverlayHeight := 0
 global g_LastRegion := 0
+global g_SizeGui := 0
 
 main()
 
-^!s::startCaptureMode()
+^!s::showSizeInputGui()
 Esc::stopCaptureMode()
 
 #HotIf IsCaptureModeActive()
@@ -43,18 +49,17 @@ main() {
     CoordMode("Mouse", "Screen")
     EnsureOutputDir()
     InitGdip()
-    EnsureOverlayGui()
 }
 
 startCaptureMode() {
-    global CAPTURE_WIDTH, CAPTURE_HEIGHT, OVERLAY_REFRESH_MS, g_IsCaptureMode, g_LastRegion
+    global OVERLAY_REFRESH_MS, g_CaptureWidth, g_CaptureHeight, g_IsCaptureMode, g_LastRegion
 
     if g_IsCaptureMode {
         return
     }
 
     g_IsCaptureMode := true
-    g_LastRegion := GetDefaultCaptureRegion(CAPTURE_WIDTH, CAPTURE_HEIGHT)
+    g_LastRegion := GetDefaultCaptureRegion(g_CaptureWidth, g_CaptureHeight)
 
     updateOverlayPosition()
     SetTimer(updateOverlayPosition, OVERLAY_REFRESH_MS)
@@ -99,15 +104,100 @@ IsCaptureModeActive() {
     return g_IsCaptureMode
 }
 
+showSizeInputGui() {
+    global APP_VERSION, g_IsCaptureMode, g_CaptureWidth, g_CaptureHeight, g_SizeGui
+
+    if g_IsCaptureMode {
+        return
+    }
+
+    if IsObject(g_SizeGui) {
+        try {
+            g_SizeGui.Show()
+        } catch {
+            g_SizeGui := 0
+        }
+        return
+    }
+
+    sizeGui := Gui("+AlwaysOnTop", "SnapFrame v" APP_VERSION)
+    sizeGui.SetFont("s10", "Segoe UI")
+    sizeGui.MarginX := 16
+    sizeGui.MarginY := 14
+
+    sizeGui.Add("Text", "xm", "Width:")
+    widthEdit := sizeGui.Add("Edit", "w140 Number", g_CaptureWidth)
+    sizeGui.Add("Text", "xm y+10", "Height:")
+    heightEdit := sizeGui.Add("Edit", "w140 Number", g_CaptureHeight)
+    startBtn := sizeGui.Add("Button", "xm y+16 w110 Default", "Start Capture")
+    cancelBtn := sizeGui.Add("Button", "x+10 w90", "Cancel")
+
+    startBtn.OnEvent("Click", (*) => handleSizeConfirm(sizeGui, widthEdit, heightEdit))
+    cancelBtn.OnEvent("Click", (*) => closeSizeInputGui(sizeGui))
+    sizeGui.OnEvent("Close", (*) => closeSizeInputGui(sizeGui))
+    sizeGui.OnEvent("Escape", (*) => closeSizeInputGui(sizeGui))
+
+    g_SizeGui := sizeGui
+    sizeGui.Show("AutoSize Center")
+}
+
+handleSizeConfirm(sizeGui, widthEdit, heightEdit) {
+    global g_CaptureWidth, g_CaptureHeight
+
+    widthText := Trim(widthEdit.Value)
+    heightText := Trim(heightEdit.Value)
+
+    if (widthText = "" || heightText = "") {
+        MsgBox("Width and height are required.", "SnapFrame")
+        return
+    }
+
+    try {
+        width := Integer(widthText)
+        height := Integer(heightText)
+    } catch {
+        MsgBox("Please enter valid positive integers.", "SnapFrame")
+        return
+    }
+
+    if (width < 100 || height < 100) {
+        MsgBox("Width and height must be at least 100.", "SnapFrame")
+        return
+    }
+
+    if (width > A_ScreenWidth || height > A_ScreenHeight) {
+        MsgBox("The capture size cannot exceed the current screen size.", "SnapFrame")
+        return
+    }
+
+    g_CaptureWidth := width
+    g_CaptureHeight := height
+
+    closeSizeInputGui(sizeGui)
+    ResetOverlayGui()
+    startCaptureMode()
+}
+
+closeSizeInputGui(sizeGui) {
+    global g_SizeGui
+
+    try {
+        sizeGui.Destroy()
+    } catch {
+    }
+
+    g_SizeGui := 0
+}
+
 updateOverlayPosition() {
-    global CAPTURE_WIDTH, CAPTURE_HEIGHT, g_IsCaptureMode, g_LastRegion
+    global g_CaptureWidth, g_CaptureHeight, g_IsCaptureMode, g_LastRegion
 
     if !g_IsCaptureMode {
         return
     }
 
     MouseGetPos(&mouseX, &mouseY)
-    region := GetRegionCenteredOnPoint(mouseX, mouseY, CAPTURE_WIDTH, CAPTURE_HEIGHT)
+    region := GetRegionCenteredOnPoint(mouseX, mouseY, g_CaptureWidth, g_CaptureHeight)
     g_LastRegion := region
     ShowOverlay(region)
 }
@@ -155,22 +245,39 @@ clampToScreen(x, y, width, height, left, top, right, bottom) {
 }
 
 EnsureOverlayGui() {
-    global CAPTURE_WIDTH, CAPTURE_HEIGHT, OVERLAY_BG_COLOR, g_OverlayGui
+    global g_CaptureWidth, g_CaptureHeight, OVERLAY_BG_COLOR, g_OverlayGui, g_OverlayWidth, g_OverlayHeight
 
-    if IsObject(g_OverlayGui) {
+    if IsObject(g_OverlayGui) && g_OverlayWidth = g_CaptureWidth && g_OverlayHeight = g_CaptureHeight {
         return g_OverlayGui
     }
+
+    ResetOverlayGui()
 
     guiObj := Gui("+AlwaysOnTop -Caption +ToolWindow +Owner +E0x20", "SnapFrameOverlay")
     guiObj.BackColor := OVERLAY_BG_COLOR
     guiObj.MarginX := 0
     guiObj.MarginY := 0
 
-    DrawOverlayBorder(guiObj, CAPTURE_WIDTH, CAPTURE_HEIGHT)
-    guiObj.Show("Hide w" CAPTURE_WIDTH " h" CAPTURE_HEIGHT)
+    DrawOverlayBorder(guiObj, g_CaptureWidth, g_CaptureHeight)
+    guiObj.Show("Hide w" g_CaptureWidth " h" g_CaptureHeight)
 
     g_OverlayGui := guiObj
+    g_OverlayWidth := g_CaptureWidth
+    g_OverlayHeight := g_CaptureHeight
     return g_OverlayGui
+}
+
+ResetOverlayGui() {
+    global g_OverlayGui, g_OverlayVisualsApplied, g_OverlayWidth, g_OverlayHeight
+
+    if IsObject(g_OverlayGui) {
+        try g_OverlayGui.Destroy()
+    }
+
+    g_OverlayGui := 0
+    g_OverlayVisualsApplied := false
+    g_OverlayWidth := 0
+    g_OverlayHeight := 0
 }
 
 DrawOverlayBorder(guiObj, width, height) {
