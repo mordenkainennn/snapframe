@@ -86,11 +86,15 @@ handleCaptureClick() {
         return
     }
 
+    region := g_LastRegion
+    g_IsCaptureMode := false
+    SetTimer(updateOverlayPosition, 0)
     HideOverlay()
+    FlushDisplay()
     Sleep(OVERLAY_HIDE_DELAY_MS)
 
-    savedFile := captureRegion(g_LastRegion.x, g_LastRegion.y, g_LastRegion.w, g_LastRegion.h)
-    stopCaptureMode()
+    savedFile := captureRegion(region.x, region.y, region.w, region.h)
+    g_LastRegion := 0
 
     if savedFile {
         TrayTip("截图已保存:`n" savedFile, "SnapFrame", 1)
@@ -312,6 +316,13 @@ HideOverlay() {
 
     if IsObject(g_OverlayGui) {
         g_OverlayGui.Hide()
+    }
+}
+
+FlushDisplay() {
+    try {
+        DllCall("Dwmapi\DwmFlush")
+    } catch {
     }
 }
 
